@@ -1,8 +1,8 @@
-import struct
 import copy
 import math
-
-peda = PEDA()
+import os
+import re
+import struct
 
 
 def execute_output(command):
@@ -407,21 +407,27 @@ class MallocState:
         self.malloc_params = MallocParams()
 
         # find the libc's data segment
-        libc_segments = peda.get_vmmap()
+        segments = execute_output("info proc mappings")
         start_addr = end_addr = -1
-        found_libc = False
-        for segment in libc_segments:
-            if segment[3].endswith("libc.so"):
-                found_libc = True
-            if found_libc and segment[2] == "rw-p" and segment[3] == "mapped":
-                start_addr, end_addr = segment[:2]
+        count_libc_segments = 0
+        want_next_segment = False
+        for segment in segments:
+            segment = segment.split()
+            if len(segment) < 4:
+                continue
+            if want_next_segment:
+                start_addr, end_addr = map(lambda y: int(y, 16), segment[:2])
                 break
+            elif len(segment) >= 5 and segment[4].endswith("libc.so"):
+                count_libc_segments += 1
+                if count_libc_segments == 3:
+                    want_next_segment = True
 
         # find the magic in the libc data segment
-        magic_str = ''.join(map(lambda c:'\\x%02x' % c, map(ord, struct.pack("I",
-                                                                             self.malloc_params.magic))))
-        locations = peda.searchmem(start_addr, end_addr, magic_str)
-        for addr, match in locations:
+        locations = execute_output("find 0x%08x, 0x%08x, (int)0x%08x" % (start_addr,
+                                   end_addr, self.malloc_params.magic))
+        for location in locations:
+            addr = int(location, 16)
             if addr != self.malloc_params.addr:
                 break
         self.addr = addr - (9 * 4)
